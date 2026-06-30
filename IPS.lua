@@ -490,4 +490,158 @@ LootTab:CreateToggle({
                 local val = model:FindFirstChild("Value")
                 if val and val:IsA("NumberValue") then return val.Value end
                 val = model:FindFirstChild("Worth")
-                if val and val:IsA("NumberValue"
+                if val and val:IsA("NumberValue") then return val.Value end
+                local attr = model:GetAttribute("Price")
+                if attr and type(attr) == "number" then return attr end
+                local num = tonumber(model.Name:match("(%d+)"))
+                return num or 0
+            end
+
+            local function isLoot(model)
+                if not model:IsA("Model") then return false end
+                if model:FindFirstChild("Humanoid") then return false end
+                if model.Name == "ActiveCamModel" then return false end
+                return getLootValue(model) > 0
+            end
+
+            local function scanAndUpdate()
+                local roundDebris = workspace:FindFirstChild("RoundDebris")
+                if not roundDebris then return end
+                local lootItems = {}
+                for _, obj in ipairs(roundDebris:GetDescendants()) do
+                    if isLoot(obj) then
+                        lootItems[obj] = getLootValue(obj)
+                    end
+                end
+                for model, highlight in pairs(LootESPData.Highlights) do
+                    if not lootItems[model] then
+                        highlight:Destroy()
+                        LootESPData.Highlights[model] = nil
+                    end
+                end
+                for model, val in pairs(lootItems) do
+                    if val >= LootESPData.MinValue then
+                        if not LootESPData.Highlights[model] then
+                            local h = Instance.new("Highlight")
+                            h.FillColor = Color3.fromRGB(255, 215, 0) -- gold
+                            h.FillTransparency = 0.5
+                            h.OutlineColor = Color3.fromRGB(255, 255, 255)
+                            h.OutlineTransparency = 0.3
+                            h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                            h.Parent = game.CoreGui
+                            LootESPData.Highlights[model] = h
+                        end
+                        LootESPData.Highlights[model].Adornee = model
+                        LootESPData.Highlights[model].Enabled = true
+                    else
+                        local h = LootESPData.Highlights[model]
+                        if h then
+                            h:Destroy()
+                            LootESPData.Highlights[model] = nil
+                        end
+                    end
+                end
+            end
+
+            scanAndUpdate()
+            local heartbeat = game:GetService("RunService").Heartbeat:Connect(function()
+                task.wait(0.5)
+                scanAndUpdate()
+            end)
+            local addConn = workspace.DescendantAdded:Connect(function(obj)
+                if isLoot(obj) then scanAndUpdate() end
+            end)
+            local remConn = workspace.DescendantRemoving:Connect(function(obj)
+                if LootESPData.Highlights[obj] then
+                    LootESPData.Highlights[obj]:Destroy()
+                    LootESPData.Highlights[obj] = nil
+                end
+            end)
+            LootESPData.Connections = {heartbeat, addConn, remConn}
+        else
+            for _, conn in ipairs(LootESPData.Connections) do conn:Disconnect() end
+            for _, h in pairs(LootESPData.Highlights) do h:Destroy() end
+            LootESPData.Highlights = {}
+            LootESPData.Connections = {}
+        end
+    end
+})
+
+LootTab:CreateInput({
+    Name = "Min Value",
+    CurrentValue = "200",
+    PlaceholderText = "200",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        local num = tonumber(Text)
+        if num then LootESPData.MinValue = num end
+    end
+})
+
+--=============================
+-- CAMERA TAB (Silent Aim)
+--=============================
+local AimData = {Strength = 0.15, Connection = nil}
+CameraTab:CreateToggle({
+    Name = "Camera Aim Assist",
+    CurrentValue = false,
+    Callback = function(Value)
+        if Value then
+            local function isPlayerCamera()
+                local char = game.Players.LocalPlayer.Character
+                if not char then return false end
+                local seat = char:FindFirstChildOfClass("VehicleSeat")
+                return seat ~= nil
+            end
+
+            local function findTarget()
+                local cam = workspace.CurrentCamera
+                local center = cam.ViewportSize / 2
+                local closestDist = math.huge
+                local closestPos = nil
+                for _, p in ipairs(game.Players:GetPlayers()) do
+                    if p ~= game.Players.LocalPlayer and p.Character and p.Character:FindFirstChild("Head") then
+                        local headPos = p.Character.Head.Position
+                        local screenPos, onScreen = cam:WorldToViewportPoint(headPos)
+                        if onScreen then
+                            local d = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
+                            if d < closestDist then
+                                closestDist = d
+                                closestPos = headPos
+                            end
+                        end
+                    end
+                end
+                return closestPos
+            end
+
+            local function aimLoop(dt)
+                if not isPlayerCamera() then return end
+                local target = findTarget()
+                if not target then return end
+                local cam = workspace.CurrentCamera
+                local targetCF = CFrame.lookAt(cam.CFrame.Position, target)
+                local alpha = math.min(AimData.Strength * dt * 60, 1)
+                cam.CFrame = cam.CFrame:Lerp(targetCF, alpha)
+            end
+
+            local conn = game:GetService("RunService").RenderStepped:Connect(aimLoop)
+            AimData.Connection = conn
+        else
+            if AimData.Connection then
+                AimData.Connection:Disconnect()
+                AimData.Connection = nil
+            end
+        end
+    end
+})
+
+CameraTab:CreateSlider({
+    Name = "Aim Strength",
+    Range = {0.01, 1},
+    Increment = 0.01,
+    CurrentValue = 0.15,
+    Callback = function(Value)
+        AimData.Strength = Value
+    end
+})
